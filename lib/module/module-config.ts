@@ -26,6 +26,16 @@ export interface WidgetEntry {
   name: string;
   /** Import path */
   from: string;
+  /**
+   * If set, the layout will only render this widget when the user has granted
+   * consent for the named category (e.g. 'marketing', 'analytics'). This is
+   * what makes consent gating mechanical for modules that ship tracking widgets.
+   *
+   * The widget is wrapped in <ConsentGate category={consentCategory}> at the
+   * layout-rendering site, so the component's effects never run for users
+   * who declined.
+   */
+  consentCategory?: string;
 }
 
 export interface SeedEntry {
