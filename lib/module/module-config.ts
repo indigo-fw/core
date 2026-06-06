@@ -5,6 +5,8 @@
  * routers, schema, server initialization, jobs, and layout widgets.
  */
 
+import type { McpToolModuleRef } from '@/core/lib/mcp/types';
+
 export interface RouterEntry {
   /** Export name (e.g. 'billingRouter') */
   name: string;
@@ -140,6 +142,22 @@ export interface ModuleConfig {
    * These are the project-side files the module needs to function (deps, admin pages, etc.).
    */
   projectFiles: string[];
+
+  /**
+   * Composite MCP tools contributed by this module. Optional.
+   *
+   * Every tRPC procedure is already auto-exposed as an MCP tool (unless it
+   * opts out via `.meta({ mcp: false })`), so most modules don't need this.
+   * Use composite tools to expose multi-procedure workflows as one atomic
+   * agent-callable action (e.g. `blog.publishPost` that creates + sets status
+   * + invalidates cache).
+   *
+   * Each entry references an exported `ResolvedMcpTool[]` from the module.
+   * Names inside the array must be namespaced (e.g. `blog.publishPost`) to
+   * avoid colliding with auto-discovered procedure paths — `indigo:sync`
+   * errors on collision.
+   */
+  mcpTools?: McpToolModuleRef[];
 }
 
 export interface OverridableSchemaEntry {
