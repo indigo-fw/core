@@ -19,38 +19,13 @@ git subtree push --prefix=src/core git@github.com:indigo-fw/core.git main
 - Core may only import from: `@/server/db`, `@/server/db/schema/*`, `@/lib/trpc/client`, `@/lib/trpc/server`, `@/lib/utils`, `@/lib/constants`, `@/lib/translations`, `@/config/plans`, `@/config/site`
 - Core components needing project data accept it via **props** (not config imports)
 - Feature-gate: `setPlanResolver()` DI — project calls once in `plans.ts`
-- Module hooks: type-safe via `HookMap` interface + declaration merging. `registerHook(event, handler)` / `runHook(event, ...args)` / `runGuard(event, ...args)`. Modules extend `HookMap` in `types/hooks.ts`
+- Module hooks: type-safe via `HookMap` (`src/core/lib/module/module-hooks.ts` — signatures + JSDoc live there). Event ownership follows the *emitter* (see Module decoupling below)
 - WS channel auth: `registerChannelAuthorizer(fn)`
 - Schema overrides: modules declare `overridableSchema` in `module.config.ts`; project extends at `src/schema/overrides/`
 
-### `user.created` hook — per-signup module setup
+### Signup & org lifecycle hooks
 
-Fired by `handleUserCreated()` in `src/lib/auth.ts` right after a new user + their personal org are created (from Better Auth's `databaseHooks.user.create.after`). Replaces the old pattern of hard-importing module schemas into `auth.ts` — `auth.ts` doesn't know what modules are installed; modules opt themselves in via this hook.
-
-**Signature** (from `src/core/lib/module/module-hooks.ts`):
-```ts
-'user.created': [user: { id: string; email: string; name: string | null }, orgId: string | null]
-```
-`orgId` is the personal org just created — `null` if that step failed (so handlers can decide whether to skip org-scoped work or fall back to user-scoped).
-
-**Register a handler** in your module's deps file (runs once during `serverInit`):
-```ts
-// src/config/deps/<module>-deps.ts
-import { registerHook } from '@/core/lib/module/module-hooks';
-
-registerHook('user.created', async (user, orgId) => {
-  if (!orgId) return;                       // org creation failed upstream
-  // …link orphaned guest records, grant reverse trial, seed module data, etc.
-});
-```
-
-Handler errors are caught + logged — they never fail signup. Multiple handlers run via `Promise.allSettled`, so one failing doesn't block the others.
-
-**Worked examples in the repo:**
-- `core-support` — links any guest chat sessions started before signup (`src/config/deps/support-deps.ts`)
-- `core-subscriptions` — grants the reverse trial (`src/config/deps/subscriptions-deps.ts` → `grantReverseTrialOnSignup`)
-
-**Adding a new hook event:** declare-merge `HookMap` in `src/core/lib/module/module-hooks.ts` (core-owned events) or in a module's `types/hooks.ts` (module-owned). Keep the tuple labels descriptive — they show up in IDE hover.
+`user.created` (fired by `handleUserCreated` in `src/lib/auth-hooks.ts`) and `org.created` (auth-hooks + organizations router) let modules do per-signup/per-org setup from their deps files — auth/org code never imports module schemas. Signatures + JSDoc: `src/core/lib/module/module-hooks.ts`. Handler errors are logged and never fail signup (`Promise.allSettled`). Worked examples: `support-deps.ts` (guest-chat linking), `subscriptions-deps.ts` (reverse trial), `payments-deps.ts` (billing profile).
 
 ## Module decoupling (so `indigo remove <module>` stays clean)
 
@@ -71,63 +46,28 @@ Verified 2026-07 by a clean-room `init -- -y --modules recommended` run (10 modu
 
 ## Shared Utilities — Use These, Don't Reinvent
 
-**CRUD & queries:**
-- `fetchOrNotFound(db, table, id, entityName)` — throws TRPCError NOT_FOUND
-- `buildAdminList()` — conditions, sort, pagination, count in parallel
-- `softDelete()` / `softRestore()` / `permanentDelete()` — soft-delete lifecycle
-- `parsePagination()` + `paginatedResult()` — `{ results, total, page, pageSize, totalPages }`
-- `updateWithRevision()` — wraps revision + slug redirect + update
-- `updateContentStatus()` — handles auto-publishedAt
-- `prepareTranslationCopy()` — group creation, unique slug, preview token
-- `narrowRecoveredData(recovered, defaults)` — autosave recovery (from `@/core/hooks`)
-- `serializeExport(items, headers, format)` — JSON/TSV bulk export
+Before writing a helper, check whether core already ships it. The inventory is
+the code, not this file — look it up live:
 
-**Slugs:**
-- `slugify()` / `slugifyFilename()` — never inline slug regex
-- `ensureSlugUnique()` — DB-checked uniqueness
-- `generateCopySlug()` — retry loop for "copy-of-" slugs
+- **Where to look:** category barrels — `src/core/crud/index.ts` (CRUD, slugs,
+  pagination, revisions, export), `src/core/lib/<area>/` (content, i18n, seo,
+  email, infra, consent, mcp, module), `src/core/components/`, `src/core/hooks/`.
+  Every export carries JSDoc; `bun run indigo map src/core` renders the full map.
+- **Categories that exist** (so you know to look before reinventing): CRUD +
+  admin-list helpers · slug utilities · shared router Zod schemas · content
+  pipeline (markdown⇄html, MDX compile, `%VAR%` resolution, content sync) ·
+  locale fallback · `cms://` link resolution · audit/webhook/email/push/logging
+  infra · `withApiRoute` REST wrapper · RSS/sitemap/canonical/JSON-LD builders ·
+  registries (cron, maintenance, scheduled publish, health checks) · consent,
+  pagination, skeleton/avatar components · `useConfirm`/`useAlert`/`usePrompt`
+  dialogs.
 
-**Router Zod schemas:** `adminListInput`, `updateStatusInput`, `duplicateAsTranslationInput`, `exportBulkInput`
-
-**Content:**
-- `htmlToMarkdown()` / `markdownToHtml()` — preserves shortcodes via placeholder strategy
-- `resolveContentVars()` — replaces `%VAR%` placeholders with `site.ts` values. Fast path skips if no `%` present
-- `compileMdx()` + `registerMdxComponent()` — unified remark→rehype pipeline, LRU-cached
-- `syncContentFiles()` — syncs `.md` from `content/{locale}/` to CMS DB
-- `seedContentFiles()` — copies `core/_templates/content/` to `content/` on init
-- `parseFrontmatter<T>()` — shared YAML parser for `.md`/`.mdx`
-
-**Locale fallback:**
-- `mergeWithLocaleFallback(localeItems, defaultItems)` — deduplicates by `translationGroup` (if present), includes all items without it. Used by `listPublished` endpoints
-- `needsLocaleFallback(lang)` — returns true for non-default locales
-
-**CMS links:** `cms://` protocol — `resolveCmsLink()`, `resolveCmsLinks(text, locale)`, `resolveRecordCmsLinks(record, locale)`. LRU + Redis pub/sub invalidation. Client: `<CmsLink>`, project wraps as `<Link>`
-
-**Infrastructure:**
-- `logAudit()` — fire-and-forget, logs errors via logger
-- `dispatchWebhook()` — fire-and-forget, logs failures
-- `enqueueTemplateEmail(to, template, vars, locale)` / `enqueueEmail({ to, subject, html })` — BullMQ queue
-- `sendPushToUser(userId, payload)` — sends to all devices, auto-cleans 410 Gone
-- `createLogger(namespace)` — structured logger
-- `withApiRoute(request, handler)` — REST v1 wrapper (auth + rate-limit + try/catch)
-
-**SEO:**
-- `generateRssFeed(config, items)` + `createRssResponse(xml)` — RSS 2.0
-- `generateSitemap(config, staticPages, fetchers)` — multilingual with hreflang
-- `buildCanonicalUrl(path, locale)` + `buildAlternates(path, locales)` — locale-aware URLs
-- `buildArticleJsonLd()` / `buildBreadcrumbJsonLd()` / `buildOrganizationJsonLd()` — JSON-LD builders
-
-**Registries:**
-- `registerCronJob({ name, pattern, handler })` + `startCronScheduler()` — BullMQ repeatable or DB-queue fallback
-- `registerMaintenanceTask(name, fn)` — sequential execution, independent error handling
-- `registerScheduledPublishTarget(target)` — auto-publishes scheduled content
-- `createHealthHandler(checks)` — factory for `/api/health`
-
-**Components:**
-- `<ConsentProvider>` + `<CookieConsent>` + `<ConsentGate category="analytics">` — cookie consent
-- `<PaginationNumbered>` / `<PaginationSimple>` / `<PaginationLoadMore>` / `<PaginationInfinite>` — 4 pagination variants
-- `<Skeleton variant="line|circle|card">` / `<Avatar>` / `<StructuredData>` — UI primitives
-- `useConfirm()` / `useAlert()` / `usePrompt()` — imperative dialog replacements for native confirm/alert/prompt
+Non-obvious constraints (these *don't* live in JSDoc):
+- Never inline a slug regex — `slugify()`/`ensureSlugUnique()` exist and are DB-aware.
+- `resolveContentVars()` has a fast path that skips work when no `%` is present — don't pre-filter.
+- CMS-link resolution is LRU + Redis pub/sub invalidated — never cache resolved links yourself.
+- `logAudit()`/`dispatchWebhook()`/`sendNotification()` are fire-and-forget by design; they log their own errors.
+- Use `enqueueEmail`/`enqueueTemplateEmail` — never a direct send.
 
 ## Translations
 
