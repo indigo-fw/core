@@ -52,18 +52,20 @@ Handler errors are caught + logged — they never fail signup. Multiple handlers
 
 **Adding a new hook event:** declare-merge `HookMap` in `src/core/lib/module/module-hooks.ts` (core-owned events) or in a module's `types/hooks.ts` (module-owned). Keep the tuple labels descriptive — they show up in IDE hover.
 
-## Known decoupling debt (so `indigo remove <module>` stays clean)
+## Module decoupling (so `indigo remove <module>` stays clean)
 
-`indigo remove <module>` regenerates `src/generated/*` but the **starter still hard-imports a few optional-module symbols in core files**, so removing a module leaves the build red until you hand-patch them. These should move to the registry/hook/widget pattern so removal is mechanical:
+Verified 2026-07 by a clean-room `init -- -y --modules recommended` run (10 modules removed): the pruned install typechecks clean and serves 200s. The mechanisms that make removal mechanical:
 
-- `src/app/(public)/[...slug]/renderers/PostDetail.tsx` & `ShowcaseDetail.tsx` → `<CommentSection>` from `core-comments`. Should be a *content-slot widget*: modules contribute `{ slot: 'post-footer', from, export }` in `module.config.ts`, `indigo:sync` generates `src/generated/content-slots.tsx`, the renderer does `<ContentSlot name="post-footer" targetType="post" targetId={id} />`.
-- `src/app/(public)/layout.tsx` → `<CartWidget>` from `core-store`. Same idea — a `headerWidgets` slot, or fold into the existing `PUBLIC_LAYOUT_WIDGETS`.
-- `src/lib/auth.ts` → `billingProfiles` from `core-payments` (personal-org billing-profile creation). Move to a `'user.created'` hook in `payments-deps.ts` (like core-support's chat-linking already is).
-- `src/app/sitemap.ts` → `cmsAuthors` from `core-authors`, dynamic `core-store/schema/products`. Sitemap fetchers should come from a `registerSitemapFetcher()` registry that modules populate in their deps files.
-- `src/app/api/webhooks/stripe/route.ts` → dynamic `import('@/core-store/lib/webhook-handler')` for store-order events. Route provider events through a `registerWebhookEventRouter()` registry instead.
-- `src/components/public/ShowcaseFeed.tsx` → `<CommentPanel>` + `trpc.comments.*`. Same content-slot pattern.
-- `src/config/chat-presets/*` → `@/core-chat/*` — these are project files shipped *by* `core-chat`; `indigo remove core-chat` should delete them (it removes `projectFiles`, so this may already work — verify).
-- `src/app/dashboard/(panel)/settings/chat/queue/page.tsx`, `store/orders/[id]/page.tsx`, etc. → `trpc.chatTaskQueue` / `trpc.storeOrders` — these are module dashboard pages; they should be `projectFiles` of their module so `indigo remove` deletes them.
+- **Header widgets**: modules contribute header-area components via `layoutWidgets: [{ slot: 'header', name, from }]` → generated `HEADER_WIDGETS` in `src/generated/module-widgets.ts` (e.g. core-store's `CartWidget`). Never hard-import module components in `layout.tsx`.
+- **Sitemap fetchers**: modules declare `sitemapFetchers: [{ name, from }]` → generated `MODULE_SITEMAP_FETCHERS` in `src/generated/module-sitemap.ts`, spread into `src/app/sitemap.ts`'s `CONTENT_FETCHERS`. Never import module schemas in `sitemap.ts`.
+- **Hook-event ownership rule**: an event belongs in the `HookMap` of whoever *emits* it. Events fired by always-present code (auth router, ws server, organizations router) but consumed by optional modules are **core-owned** — `attribution.capture`, `payment.conversion`, `ws.message`, `feature.require` live in core's `HookMap`. A module-owned declaration for a core-emitted event breaks typecheck the moment the module is removed.
+- **`projectFiles` must be exhaustive**: every page/config/test a module scaffolds into project space (including client components next to pages, `__tests__`, and `config/*` files) must be listed, or removal orphans them with dangling imports. When adding a scaffolded file to a module, add it to `projectFiles` in the same commit.
+- **Optional-module imports in scripts**: use computed specifiers + try/catch (see `scripts/indigo/personas.ts`, init's MCP-key minting) so typecheck passes on installs without the module.
+
+### Remaining debt
+
+- `src/app/(public)/[...slug]/renderers/PostDetail.tsx` & `ShowcaseDetail.tsx` → `<CommentSection>` from `core-comments`, and `src/components/public/ShowcaseFeed.tsx` → `<CommentPanel>` + `trpc.comments.*`. Needs a *content-slot widget*: modules contribute `{ slot: 'post-footer', from, export }`, `indigo:sync` generates `src/generated/content-slots.tsx`. (Untested by the clean-room run — core-comments is in the recommended set.)
+- `src/lib/auth.ts` → `billingProfiles` from `core-payments` (personal-org billing-profile creation). Move to a `'user.created'` hook in `payments-deps.ts` (like core-support's chat-linking already is). (Also untested — core-payments is recommended.)
 
 ## Shared Utilities — Use These, Don't Reinvent
 

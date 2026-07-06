@@ -38,6 +38,14 @@ export interface WidgetEntry {
    * who declined.
    */
   consentCategory?: string;
+  /**
+   * Where the widget renders: 'layout' (default) floats at the app-wrapper
+   * level (chat bubbles, trackers); 'header' renders in the public header's
+   * actions area (e.g. core-store's CartWidget). Keeping this in module config
+   * means the layout never hard-imports module components — `indigo remove`
+   * stays mechanical.
+   */
+  slot?: 'layout' | 'header';
 }
 
 export interface SeedEntry {
@@ -119,6 +127,13 @@ export interface ModuleConfig {
   navItems: NavItemEntry[];
   /** Dashboard widgets contributed by this module (draggable, configurable) */
   dashboardWidgets?: DashboardWidgetEntry[];
+  /**
+   * Sitemap fetchers contributed by this module. Each entry names an exported
+   * `SitemapFetcher` (or `SitemapFetcher[]`) — generated into
+   * `src/generated/module-sitemap.ts` so `src/app/sitemap.ts` never
+   * hard-imports module schemas.
+   */
+  sitemapFetchers?: { name: string; from: string }[];
   /**
    * Schema tables that can be extended by the project.
    *
