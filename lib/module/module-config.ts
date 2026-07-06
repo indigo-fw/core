@@ -158,6 +158,15 @@ export interface ModuleConfig {
    * errors on collision.
    */
   mcpTools?: McpToolModuleRef[];
+
+  /**
+   * Side-effect imports loaded with the MCP layer (into generated
+   * `module-mcp.ts`). Use for registrations core's MCP machinery consumes —
+   * e.g. `core-api` registers the API-key verifier here. Unlike `serverInit`
+   * (Bun-side module graph), these load in the Next.js route bundle, which is
+   * where MCP auth actually runs.
+   */
+  mcpInit?: string[];
 }
 
 export interface OverridableSchemaEntry {

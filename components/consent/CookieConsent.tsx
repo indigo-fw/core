@@ -74,15 +74,17 @@ export function CookieConsent({
   const [draft, setDraft] = useState(consent);
 
   // Sync the draft to whatever the global consent is whenever the banner
-  // (re-)opens. Avoids stale values if the user closed → settings changed elsewhere → reopen.
-  const wasOpen = useRef(isOpen);
-  useEffect(() => {
-    if (isOpen && !wasOpen.current) {
+  // (re-)opens. Avoids stale values if the user closed → settings changed
+  // elsewhere → reopen. Adjust-during-render (React docs pattern): the reset
+  // lands in the same render pass, so the banner never paints a stale draft.
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  if (isOpen !== wasOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) {
       setDraft(consent);
       setShowDetails(hasConsented);
     }
-    wasOpen.current = isOpen;
-  }, [isOpen, consent, hasConsented]);
+  }
 
   // Focus the first interactive control when the banner opens via openSettings
   // (i.e. user explicitly asked for it). On the first-visit appearance we

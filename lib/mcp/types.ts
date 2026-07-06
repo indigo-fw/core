@@ -67,19 +67,26 @@ export interface McpToolEntry {
   readOnly?: boolean;
 }
 
-/** Runtime context passed to composite tool handlers. */
+/** The authenticated principal a tool call acts as. */
+export interface McpUser {
+  id: string;
+  email: string;
+  role: string;
+  banned: boolean;
+  emailVerified: boolean;
+  createdAt: string;
+}
+
+/** Runtime context passed to tool handlers. */
 export interface McpInvocationContext {
-  /** Resolved user (the key's `createdBy`). */
-  user: {
-    id: string;
-    email: string;
-    role: string;
-    banned: boolean;
-    emailVerified: boolean;
-    createdAt: string;
-  };
-  /** Organization the API key is bound to. */
-  organizationId: string;
+  /**
+   * Resolved user, or `null` for anonymous access (dev-only — lets agents
+   * test the logged-out experience; protected procedures fail with
+   * UNAUTHORIZED exactly as they would for a logged-out visitor).
+   */
+  user: McpUser | null;
+  /** Organization scope, or `null` when anonymous. */
+  organizationId: string | null;
   /** Original request headers. */
   headers: Headers;
 }
@@ -90,6 +97,13 @@ export interface ResolvedMcpTool {
   description: string;
   inputSchema: ZodTypeAny;
   readOnly?: boolean;
+  /**
+   * Promoted tools appear flat in `tools/list`. Non-promoted tools stay in
+   * the registry, discoverable via `search_tools` and callable via
+   * `invoke_tool`. A tRPC procedure is promoted by giving it an explicit
+   * `.meta({ mcp: { description } })`; composite tools are always promoted.
+   */
+  promoted?: boolean;
   /** Invokes the tool with already-validated input. */
   invoke: (input: unknown, ctx: McpInvocationContext) => Promise<unknown>;
 }
