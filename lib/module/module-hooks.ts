@@ -63,6 +63,8 @@ export interface HookMap {
   'ws.message': [userId: string, msg: { type?: string; payload?: Record<string, unknown> }];
   /** Feature gate guard (consumed by core-subscriptions; passes when absent). */
   'feature.require': [orgId: string, feature: string, currentUsage?: number];
+  /** Fired after an organization is created (consumed by core-payments to seed a billing profile). */
+  'org.created': [orgId: string, name: string];
 }
 
 // ─── Typed hook registry ───────────────────────────────────────────────────

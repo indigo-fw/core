@@ -62,10 +62,12 @@ Verified 2026-07 by a clean-room `init -- -y --modules recommended` run (10 modu
 - **`projectFiles` must be exhaustive**: every page/config/test a module scaffolds into project space (including client components next to pages, `__tests__`, and `config/*` files) must be listed, or removal orphans them with dangling imports. When adding a scaffolded file to a module, add it to `projectFiles` in the same commit.
 - **Optional-module imports in scripts**: use computed specifiers + try/catch (see `scripts/indigo/personas.ts`, init's MCP-key minting) so typecheck passes on installs without the module.
 
+- **Content slots**: modules contribute components to named slots via `contentSlots: [{ slot, name, from }]` → generated `src/generated/content-slots.tsx` (`CONTENT_SLOTS` + `<ContentSlot>`; special slot `showcase-comments` re-exports `useShowcaseComments` with an inert fallback). This is how core-comments reaches PostDetail/ShowcaseDetail/ShowcaseFeed without hard imports.
+- **`org.created` hook**: fired by `auth-hooks.ts` (personal org at signup) and the organizations router; core-payments' handler in `payments-deps.ts` seeds the billing profile. No always-present file imports payment schemas.
+
 ### Remaining debt
 
-- `src/app/(public)/[...slug]/renderers/PostDetail.tsx` & `ShowcaseDetail.tsx` → `<CommentSection>` from `core-comments`, and `src/components/public/ShowcaseFeed.tsx` → `<CommentPanel>` + `trpc.comments.*`. Needs a *content-slot widget*: modules contribute `{ slot: 'post-footer', from, export }`, `indigo:sync` generates `src/generated/content-slots.tsx`. (Untested by the clean-room run — core-comments is in the recommended set.)
-- `src/lib/auth.ts` → `billingProfiles` from `core-payments` (personal-org billing-profile creation). Move to a `'user.created'` hook in `payments-deps.ts` (like core-support's chat-linking already is). (Also untested — core-payments is recommended.)
+- **core-payments + core-subscriptions are `required: true` primitives** (enforced in the init picker and `indigo remove`): core code still depends on them — `src/core/components/TokenBalance.tsx` uses `trpc.billing`, and `src/config/pricing.ts` is typed by subscription plan types. Making them truly optional means a token/billing DI seam in core; until then the picker keeps them automatically.
 
 ## Shared Utilities — Use These, Don't Reinvent
 

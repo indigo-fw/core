@@ -135,6 +135,14 @@ export interface ModuleConfig {
    */
   sitemapFetchers?: { name: string; from: string }[];
   /**
+   * Components contributed to named content slots (generated into
+   * `src/generated/content-slots.tsx`). Regular slots (e.g. 'post-footer')
+   * receive `{ targetType, targetId }` props and render via `<ContentSlot>`.
+   * The special slot 'showcase-comments' contributes the `useShowcaseComments`
+   * hook (re-exported as-is; an inert fallback is generated when absent).
+   */
+  contentSlots?: { slot: string; name: string; from: string }[];
+  /**
    * Schema tables that can be extended by the project.
    *
    * The module exports column definitions (not the table). The project can create
