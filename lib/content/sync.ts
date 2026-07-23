@@ -18,6 +18,7 @@ import { parseFrontmatter } from '@/core/lib/content/frontmatter';
 import { createRevision, pickSnapshot } from '@/core/crud/content-revisions';
 import { createLogger } from '@/core/lib/infra/logger';
 import { PostType, ContentStatus } from '@/core/types/cms';
+import { DEFAULT_LOCALE } from '@/lib/constants';
 import { cmsPosts } from '@/server/db/schema/cms';
 import type { DbClient } from '@/server/db';
 
@@ -312,7 +313,7 @@ export function pickCanonicalGroup(
   posts: { lang: string; translationGroup: string | null }[]
 ): string | null {
   return (
-    posts.find((p) => p.lang === 'en')?.translationGroup ??
+    posts.find((p) => p.lang === DEFAULT_LOCALE)?.translationGroup ??
     posts.find((p) => p.translationGroup)?.translationGroup ??
     null
   );
@@ -346,7 +347,7 @@ async function linkTranslationGroups(
         and(
           eq(cmsPosts.slug, targetSlug),
           eq(cmsPosts.type, file.postType),
-          eq(cmsPosts.lang, 'en')
+          eq(cmsPosts.lang, DEFAULT_LOCALE)
         )
       )
       .limit(1);

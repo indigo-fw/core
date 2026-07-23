@@ -1,10 +1,15 @@
 import { cn } from '@/lib/utils';
 
 /**
- * `{{image}}` shortcode - a content image that can link somewhere or sit
- * static. `cms://asset/` srcs are already resolved to storage/CDN URLs
- * upstream (resolveRecordAssetUris runs on the whole content string before
- * the shortcode parser sees it), so `src` always arrives as a plain URL.
+ * `[image /]` shortcode - a content image that can link somewhere or sit
+ * static. Attrs-only, so it MUST be self-closing (the parser only matches
+ * `[name attrs /]` or a paired `[name]...[/name]`):
+ *
+ *   [image src="cms://asset/en/hero.jpg" alt="Hero" href="/signup" w="1280" h="720" /]
+ *
+ * `cms://asset/` srcs are already resolved to storage/CDN URLs upstream
+ * (resolveRecordAssetUris runs on the whole content string before the
+ * shortcode parser sees it), so `src` always arrives as a plain URL.
  *
  * Attrs:
  *   src      required - image URL
