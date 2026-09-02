@@ -16,9 +16,14 @@
  * The PO→JSON pipeline replaces dots with @@@ in keys, so we apply the same
  * transform at lookup time to match.
  */
+import { useMemo } from 'react';
 
+import {
+  type TranslationFn,
+  createTranslationFunction,
+  wrapWithFallback,
+} from './translation-shared';
 import { useTranslations as useBaseTranslations } from 'next-intl';
-import { createTranslationFunction, wrapWithFallback, type TranslationFn } from './translation-shared';
 
 export type { TranslationFn, TranslationValues } from './translation-shared';
 
@@ -35,7 +40,13 @@ export function useAdminTranslations(
   namespace: string = 'General'
 ): TranslationFn {
   const t = useBaseTranslations(namespace);
-  return wrapWithFallback(createTranslationFunction(t), namespace);
+  // Stable identity: `__` lands in useMemo/useCallback/useEffect dependency
+  // lists all over the dashboard. A fresh function every render would
+  // silently re-run every one of those on every render.
+  return useMemo(
+    () => wrapWithFallback(createTranslationFunction(t), namespace),
+    [t, namespace]
+  );
 }
 
 /**
@@ -48,13 +59,11 @@ export const useBlankTranslations = (): TranslationFn => blankTranslator;
 /** Alias */
 export const useTranslations = useAdminTranslations;
 
-const blankTranslator: TranslationFn = Object.assign(
-  (key: string) => key,
-  {
-    _n: (singular: string, plural: string, count: number) => count === 1 ? singular : plural,
-    _x: (key: string) => key,
-  },
-);
+const blankTranslator: TranslationFn = Object.assign((key: string) => key, {
+  _n: (singular: string, plural: string, count: number) =>
+    count === 1 ? singular : plural,
+  _x: (key: string) => key,
+});
 
 /**
  * Module-scope extraction marker for translatable data constants.

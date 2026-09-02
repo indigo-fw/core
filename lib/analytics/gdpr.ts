@@ -1,13 +1,14 @@
-import { eq } from 'drizzle-orm';
 import { createHmac } from 'crypto';
+import { eq } from 'drizzle-orm';
 
-import type { DbClient } from '@/server/db';
-import { user, session, account } from '@/server/db/schema/auth';
-import { cmsAuditLog } from '@/server/db/schema/audit';
-import { Policy } from '@/core/policy';
+import { invalidateUserSessions } from '@/core/lib/auth/session-invalidation';
 import { logAudit } from '@/core/lib/infra/audit';
-import { runHook } from '@/core/lib/module/module-hooks';
 import { createLogger } from '@/core/lib/infra/logger';
+import { runHook } from '@/core/lib/module/module-hooks';
+import { Policy } from '@/core/policy';
+import type { DbClient } from '@/server/db';
+import { cmsAuditLog } from '@/server/db/schema/audit';
+import { account, session, user } from '@/server/db/schema/auth';
 
 const logger = createLogger('GDPR');
 
@@ -73,8 +74,10 @@ export async function anonymizeUser(
     });
   }
 
-  // 3. Delete all sessions (FK cascades handle related data)
+  // 3. Delete all sessions (FK cascades handle related data) and void the
+  //    cookie-cached ones so the erased account can't keep acting for 5 min
   await db.delete(session).where(eq(session.userId, userId));
+  invalidateUserSessions(userId);
 
   // 4. Delete all accounts (credentials, OAuth tokens)
   await db.delete(account).where(eq(account.userId, userId));

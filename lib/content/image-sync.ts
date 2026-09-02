@@ -32,6 +32,7 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { basename, extname, join, resolve, sep } from 'path';
 
+import { isDuplicateKeyError } from '@/core/crud/drizzle-utils';
 import { createLogger } from '@/core/lib/infra/logger';
 import { getStorage } from '@/core/storage';
 import { FileType } from '@/core/types/cms';
@@ -73,14 +74,7 @@ function isLfsPointer(buf: Buffer): boolean {
 
 /** Postgres unique_violation — the partial unique index caught a concurrent insert. */
 function isUniqueViolation(err: unknown): boolean {
-  const e = err as { code?: string; cause?: { code?: string }; message?: string };
-  return (
-    e?.code === '23505' ||
-    e?.cause?.code === '23505' ||
-    /duplicate key value|unique constraint|source_path_active_uniq/i.test(
-      e?.message ?? '',
-    )
-  );
+  return isDuplicateKeyError(err);
 }
 
 export interface ImageSyncResult {

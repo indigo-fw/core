@@ -60,7 +60,8 @@ the code, not this file — look it up live:
   infra · `withApiRoute` REST wrapper · RSS/sitemap/canonical/JSON-LD builders ·
   registries (cron, maintenance, scheduled publish, health checks) · consent,
   pagination, skeleton/avatar components · `useConfirm`/`useAlert`/`usePrompt`
-  dialogs.
+  dialogs · memory telemetry (`registerMemoryStat`) · session invalidation ·
+  build info (`getBuildInfo`).
 
 Non-obvious constraints (these *don't* live in JSDoc):
 - Never inline a slug regex — `slugify()`/`ensureSlugUnique()` exist and are DB-aware.
@@ -68,6 +69,10 @@ Non-obvious constraints (these *don't* live in JSDoc):
 - CMS-link resolution is LRU + Redis pub/sub invalidated — never cache resolved links yourself.
 - `logAudit()`/`dispatchWebhook()`/`sendNotification()` are fire-and-forget by design; they log their own errors.
 - Use `enqueueEmail`/`enqueueTemplateEmail` — never a direct send.
+- `updateWithRevision()` runs snapshot + redirect + `doUpdate` in ONE transaction — use the `tx` it hands `doUpdate`, never open a nested `db.transaction()`.
+- `isDuplicateKeyError(err)` (`@/core/crud`) is the only way to detect a unique violation — Drizzle wraps the driver error, so `err.code` sits on `err.cause`.
+- Every long-lived Map/Set: eviction path + `registerMemoryStat('name', () => size)` (`@/core/lib/infra/memory-stats`) — it shows on `/api/health` and the 5-min memory heartbeat.
+- `createLogger()` only in server/core code (lint-enforced `no-console`); `throw markLogged(err)` after logging with context so the queue's catch-all doesn't log it twice.
 
 ## Translations
 
