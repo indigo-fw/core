@@ -25,7 +25,9 @@ git subtree push --prefix=src/core git@github.com:indigo-fw/core.git main
 
 ### Signup & org lifecycle hooks
 
-`user.created` (fired by `handleUserCreated` in `src/lib/auth-hooks.ts`) and `org.created` (auth-hooks + organizations router) let modules do per-signup/per-org setup from their deps files — auth/org code never imports module schemas. Signatures + JSDoc: `src/core/lib/module/module-hooks.ts`. Handler errors are logged and never fail signup (`Promise.allSettled`). Worked examples: `support-deps.ts` (guest-chat linking), `subscriptions-deps.ts` (reverse trial), `payments-deps.ts` (billing profile).
+`user.created` (fired by `handleUserCreated` in `src/lib/auth-hooks.ts`) and `org.created` (auth-hooks + organizations router) let modules do per-signup/per-org setup from their deps files — auth/org code never imports module schemas.
+
+**Every module that stores personal data must also register `user.anonymize` (scrub it) and `user.export` (add it to the portability bundle).** Core only knows `user`/`session`/`account`; without these, an erasure request leaves module PII in place and an export silently omits it. Both run through `runGuard`, so a throwing handler aborts loudly instead of reporting a success that didn't happen. Signatures + JSDoc: `src/core/lib/module/module-hooks.ts`. Handler errors are logged and never fail signup (`Promise.allSettled`). Worked examples: `support-deps.ts` (guest-chat linking), `subscriptions-deps.ts` (reverse trial), `payments-deps.ts` (billing profile).
 
 ## Module decoupling (so `indigo remove <module>` stays clean)
 
@@ -68,7 +70,8 @@ Non-obvious constraints (these *don't* live in JSDoc):
 - `resolveContentVars()` has a fast path that skips work when no `%` is present — don't pre-filter.
 - CMS-link resolution is LRU + Redis pub/sub invalidated — never cache resolved links yourself.
 - `logAudit()`/`dispatchWebhook()`/`sendNotification()` are fire-and-forget by design; they log their own errors.
-- Use `enqueueEmail`/`enqueueTemplateEmail` — never a direct send.
+- Use `enqueueEmail`/`enqueueTemplateEmail` — never a direct send. **Bulk mail** (anything not password-reset/verification/receipt shaped) must pass `{ userId, channel }`: that gates on the user's opt-out, attaches RFC 8058 one-click headers, and exposes `{{unsubscribeUrl}}` to the template. Transactional mail passes neither and is never suppressed.
+- Storage keys: `resolveUniqueKey()` before writing a user-named file — never prefix a timestamp to dodge collisions. `upload()` takes `{ contentType }`; pass it whenever you know the real type, or object stores serve `application/octet-stream` and browsers download instead of render.
 - `updateWithRevision()` runs snapshot + redirect + `doUpdate` in ONE transaction — use the `tx` it hands `doUpdate`, never open a nested `db.transaction()`.
 - `isDuplicateKeyError(err)` (`@/core/crud`) is the only way to detect a unique violation — Drizzle wraps the driver error, so `err.code` sits on `err.cause`.
 - Every long-lived Map/Set: eviction path + `registerMemoryStat('name', () => size)` (`@/core/lib/infra/memory-stats`) — it shows on `/api/health` and the 5-min memory heartbeat.

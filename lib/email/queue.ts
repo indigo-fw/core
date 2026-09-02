@@ -21,7 +21,23 @@ const logger = createLogger('Email');
 // ---------------------------------------------------------------------------
 
 /** Per-message delivery options carried through the queue. */
-export type EnqueueEmailOptions = Pick<SendEmailOptions, 'replyTo' | 'headers'>;
+export type EnqueueEmailOptions = Pick<
+  SendEmailOptions,
+  'replyTo' | 'headers'
+> & {
+  /**
+   * Marks this as BULK mail on a named channel (`marketing`, `digest`, …) and
+   * opts it into the consent path: the send is skipped if the user muted the
+   * channel, RFC 8058 one-click headers are attached, and `{{unsubscribeUrl}}`
+   * becomes available to the template.
+   *
+   * Requires `userId`. Omit both for transactional mail — password resets and
+   * verification must never be suppressed by a newsletter opt-out.
+   */
+  channel?: string;
+  /** Recipient's user id. Required with `channel`; ignored without it. */
+  userId?: string;
+};
 
 interface EmailJob extends EnqueueEmailOptions {
   to: string;
@@ -74,6 +90,37 @@ function filterRecipients(
 }
 
 /**
+ * Resolve the consent side of a bulk send: is this channel still enabled for
+ * the user, and what unsubscribe URL/headers should ride along?
+ * Returns null when the send must be skipped entirely.
+ *
+ * Transactional mail (no `channel`) short-circuits with an empty result — it is
+ * never gated and never carries an unsubscribe header.
+ */
+async function resolveChannel(
+  opts: EnqueueEmailOptions,
+  context: Record<string, unknown>
+): Promise<{
+  headers?: Record<string, string>;
+  unsubscribeUrl?: string;
+} | null> {
+  if (!opts.channel || !opts.userId) return {};
+
+  const { isChannelEnabled, buildUnsubscribe } = await import('./channels');
+  if (!(await isChannelEnabled(opts.userId, opts.channel))) {
+    logger.info('Skipping bulk email — channel muted', {
+      ...context,
+      channel: opts.channel,
+    });
+    return null;
+  }
+
+  const { url, headers } = await buildUnsubscribe(opts.userId, opts.channel);
+  // Caller-supplied headers win, so an explicit override is still possible.
+  return { headers: { ...headers, ...opts.headers }, unsubscribeUrl: url };
+}
+
+/**
  * Enqueue a templated email.
  * Validates recipients, carries locale through the queue for template resolution.
  */
@@ -95,6 +142,13 @@ export async function enqueueTemplateEmail(
     return;
   }
 
+  const consent = await resolveChannel(opts, { template });
+  if (!consent) return;
+  const headers = consent.headers ?? opts.headers;
+  if (consent.unsubscribeUrl) {
+    vars = { ...vars, unsubscribeUrl: consent.unsubscribeUrl };
+  }
+
   if (emailQueue) {
     await emailQueue.add(
       'send-template',
@@ -104,7 +158,7 @@ export async function enqueueTemplateEmail(
         data: vars,
         locale,
         replyTo: opts.replyTo,
-        headers: opts.headers,
+        headers,
       } satisfies EmailJob,
       getRetryPolicy()
     );
@@ -130,7 +184,7 @@ export async function enqueueTemplateEmail(
         extraLayoutVars,
       }
     );
-    await sendEmail(valid, subject, html, opts);
+    await sendEmail(valid, subject, html, { replyTo: opts.replyTo, headers });
   }
 }
 
@@ -151,10 +205,20 @@ export async function enqueueEmail(
     return;
   }
 
+  const consent = await resolveChannel(payload, { subject: payload.subject });
+  if (!consent) return;
+  const headers = consent.headers ?? payload.headers;
+
   if (emailQueue) {
     await emailQueue.add(
       'send-raw',
-      payload satisfies RawEmailJob,
+      {
+        to: payload.to,
+        subject: payload.subject,
+        html: payload.html,
+        replyTo: payload.replyTo,
+        headers,
+      } satisfies RawEmailJob,
       getRetryPolicy()
     );
   } else {
@@ -163,7 +227,7 @@ export async function enqueueEmail(
     );
     await sendEmail(payload.to, payload.subject, payload.html, {
       replyTo: payload.replyTo,
-      headers: payload.headers,
+      headers,
     });
   }
 }

@@ -1,4 +1,4 @@
-import { type StorageProvider } from './index';
+import { type StorageProvider, type UploadOptions } from './index';
 import { createHash, createHmac } from 'node:crypto';
 
 /**
@@ -29,11 +29,25 @@ export class S3Storage implements StorageProvider {
     this.cdnUrl = process.env.NEXT_PUBLIC_CDN_URL || null;
   }
 
-  async upload(filepath: string, buffer: Buffer): Promise<string> {
-    const contentType = guessMimeType(filepath);
+  async upload(
+    filepath: string,
+    buffer: Buffer,
+    options?: UploadOptions
+  ): Promise<string> {
+    // An explicit content type wins over the extension guess — callers that
+    // already know the real type (an upload's reported MIME, a re-encoded
+    // variant) shouldn't be second-guessed by the filename.
+    const contentType = options?.contentType ?? guessMimeType(filepath);
+    const headers: Record<string, string> = { 'content-type': contentType };
+    for (const [k, v] of Object.entries(options?.metadata ?? {})) {
+      // S3 user metadata travels as x-amz-meta-* and must be signed with the
+      // request, so it goes through the same header path as content-type.
+      headers[`x-amz-meta-${k.toLowerCase()}`] = v;
+    }
+
     const response = await this.request('PUT', filepath, {
       body: buffer,
-      headers: { 'content-type': contentType },
+      headers,
     });
 
     if (!response.ok) {
@@ -70,6 +84,43 @@ export class S3Storage implements StorageProvider {
       return `${this.cdnUrl}/${filepath}`;
     }
     return `${this.endpoint}/${this.bucket}/${filepath}`;
+  }
+
+  /** Already absolute — the bucket/CDN origin is part of every S3 URL. */
+  absoluteUrl(filepath: string): string {
+    return this.url(filepath);
+  }
+
+  async exists(filepath: string): Promise<boolean> {
+    // HEAD, so a large object costs one round trip and no body transfer.
+    const response = await this.request('HEAD', filepath);
+    if (response.status === 404 || response.status === 403) return false;
+    if (!response.ok) {
+      throw new Error(
+        `S3 exists check failed (${response.status}) for "${filepath}"`
+      );
+    }
+    return true;
+  }
+
+  async copy(sourcePath: string, destPath: string): Promise<string> {
+    // Server-side copy: the bytes never travel through this process.
+    // x-amz-copy-source must be the URL-encoded /bucket/key of the source.
+    const response = await this.request('PUT', destPath, {
+      headers: {
+        'x-amz-copy-source': `/${this.bucket}/${sourcePath}`
+          .split('/')
+          .map((seg, i) => (i === 0 ? seg : encodeURIComponent(seg)))
+          .join('/'),
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`S3 copy failed (${response.status}): ${text}`);
+    }
+
+    return destPath;
   }
 
   private async request(
