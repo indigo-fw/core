@@ -103,7 +103,7 @@ function collectReferencedAssets(): Set<string> {
         continue;
       }
       if (extname(entry).toLowerCase() !== '.md') continue;
-      // Skip ALL-CAPS docs (CLAUDE.md, README.md…) — mirrors content sync.
+      // Skip ALL-CAPS docs (AGENTS.md, CLAUDE.md, README.md…) — mirrors content sync.
       if (/^[A-Z][A-Z0-9_-]*\.md$/.test(entry)) continue;
 
       const raw = readFileSync(full, 'utf-8');
