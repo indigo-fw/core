@@ -38,6 +38,12 @@ export async function pollAndProcess(
   handler: TaskHandler,
   batchSize = 5
 ): Promise<number> {
+  // A handler that took the process down leaves its task `processing` with an
+  // expired lock; nothing else revisits it (the boot-time sweep in server.ts
+  // only runs once per deploy). Sweep per poll — the stale index makes the
+  // empty case a no-op.
+  await recoverStaleTasks(queue);
+
   const now = new Date();
 
   // SELECT pending tasks ready to run, ordered by priority DESC, createdAt ASC
@@ -152,8 +158,12 @@ export function startDbQueueWorker(
   };
 }
 
-/** Recover stale tasks (processing but lock expired) */
-export async function recoverStaleTasks(): Promise<number> {
+/**
+ * Recover stale tasks (processing but lock expired), optionally for one queue.
+ * Counts as a failed attempt so a handler that crashes the process every time
+ * dead-letters instead of retrying forever.
+ */
+export async function recoverStaleTasks(queue?: string): Promise<number> {
   const now = new Date();
   const stale = await db
     .select({
@@ -165,7 +175,8 @@ export async function recoverStaleTasks(): Promise<number> {
     .where(
       and(
         eq(saasTaskQueue.status, 'processing'),
-        lte(saasTaskQueue.lockedUntil, now)
+        lte(saasTaskQueue.lockedUntil, now),
+        ...(queue ? [eq(saasTaskQueue.queue, queue)] : [])
       )
     )
     .limit(100);
@@ -187,7 +198,14 @@ export async function recoverStaleTasks(): Promise<number> {
           : new Date(Date.now() + getBackoff(attempts)),
         updatedAt: new Date(),
       })
-      .where(eq(saasTaskQueue.id, task.id));
+      // Guarded on status so two pollers sweeping the same row don't both
+      // count an attempt.
+      .where(
+        and(
+          eq(saasTaskQueue.id, task.id),
+          eq(saasTaskQueue.status, 'processing')
+        )
+      );
     recovered++;
   }
 

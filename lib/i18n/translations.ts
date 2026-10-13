@@ -5,8 +5,9 @@
  *   Requires messages loaded by the dashboard layout (public + admin merged).
  *   Do NOT use in components rendered on public pages — the admin namespace won't exist.
  *
- * `useBlankTranslations()` — public/shared client components (identity function).
- *   Returns keys as-is. Use for components that render outside the dashboard layout.
+ * `useBlankTranslations()` — public/shared client components (no catalog lookup).
+ *   Returns the key with `{values}` filled in. Use for components that render
+ *   outside the dashboard layout.
  *
  * `dataTranslations(namespace)` — module-scope extraction marker (identity at runtime).
  *
@@ -20,7 +21,9 @@ import { useMemo } from 'react';
 
 import {
   type TranslationFn,
+  type TranslationValues,
   createTranslationFunction,
+  fillFallback,
   wrapWithFallback,
 } from './translation-shared';
 import { useTranslations as useBaseTranslations } from 'next-intl';
@@ -59,11 +62,21 @@ export const useBlankTranslations = (): TranslationFn => blankTranslator;
 /** Alias */
 export const useTranslations = useAdminTranslations;
 
-const blankTranslator: TranslationFn = Object.assign((key: string) => key, {
-  _n: (singular: string, plural: string, count: number) =>
-    count === 1 ? singular : plural,
-  _x: (key: string) => key,
-});
+// Not a pure identity: values are still substituted, otherwise
+// __('Page {page} of {totalPages}', { page, totalPages }) renders its braces.
+const blankTranslator: TranslationFn = Object.assign(
+  (key: string, values?: TranslationValues) => fillFallback(key, values),
+  {
+    _n: (
+      singular: string,
+      plural: string,
+      count: number,
+      values?: TranslationValues
+    ) => fillFallback(count === 1 ? singular : plural, { count, ...values }),
+    _x: (key: string, _context: string, values?: TranslationValues) =>
+      fillFallback(key, values),
+  }
+);
 
 /**
  * Module-scope extraction marker for translatable data constants.

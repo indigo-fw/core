@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { createHmac } from 'crypto';
 import { eq } from 'drizzle-orm';
 
@@ -52,16 +53,25 @@ export async function anonymizeUser(
     .where(eq(user.id, userId))
     .limit(1);
 
+  // TRPCErrors (not plain Error) so routers can pass refusals straight through
+  // with the right status, and treat anything else as an internal failure
+  // whose message must not reach the client.
   if (!target) {
-    throw new Error('User not found');
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
   }
 
   if (isAnonymized(target)) {
-    throw new Error('User has already been deleted');
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'User has already been deleted',
+    });
   }
 
   if (Policy.for(target.role).canAccessAdmin()) {
-    throw new Error('Cannot anonymize a staff account');
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'Cannot anonymize a staff account',
+    });
   }
 
   // 2. Run pre-delete hooks (e.g. cancel subscriptions)
@@ -154,7 +164,7 @@ export async function exportUserData(
     .limit(1);
 
   if (!userData) {
-    throw new Error('User not found');
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'User not found' });
   }
 
   // Collect audit log entries for this user

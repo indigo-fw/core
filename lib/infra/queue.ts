@@ -1,7 +1,11 @@
 import { type Processor, Queue, Worker } from 'bullmq';
 
 import { createLogger, wasLogged } from '@/core/lib/infra/logger';
-import { disconnectAll, getRedis } from '@/core/lib/infra/redis';
+import {
+  disconnectAll,
+  getProducerRedis,
+  getRedis,
+} from '@/core/lib/infra/redis';
 
 const log = createLogger('queue');
 
@@ -28,9 +32,19 @@ const DEFAULT_JOB_OPTIONS = {
 const queues: Queue[] = [];
 const workers: Worker[] = [];
 
-/** Create a BullMQ queue with shared Redis connection */
+/**
+ * Create a BullMQ queue (job producer).
+ *
+ * Producers ride the request path (signup email, webhook dispatch), so they
+ * use the bounded-retry producer connection: with Redis down, `queue.add()`
+ * rejects in bounded time instead of buffering forever like the worker
+ * profile. `getRedis()` stays the "is Redis configured" probe so installs
+ * without REDIS_URL never open a producer socket (and test doubles that stub
+ * only `getRedis` keep working).
+ */
 export function createQueue(name: string): Queue | null {
-  const conn = getRedis();
+  if (!getRedis()) return null;
+  const conn = getProducerRedis();
   if (!conn) return null;
 
   const queue = new Queue(name, {
@@ -40,6 +54,16 @@ export function createQueue(name: string): Queue | null {
   });
   queues.push(queue);
   return queue;
+}
+
+/**
+ * Reuse the already-created queue for `name`, creating one on first use.
+ * For call sites that enqueue ad hoc (queue-adapter): a fresh `Queue` per
+ * enqueue would leak instances into `queues` and skip the shared prefix and
+ * job defaults, so the consumer never sees the job under a custom prefix.
+ */
+export function getOrCreateQueue(name: string): Queue | null {
+  return queues.find((q) => q.name === name) ?? createQueue(name);
 }
 
 /** Create a BullMQ worker with shared Redis connection */
@@ -94,9 +118,37 @@ export function getQueues(): Queue[] {
   return queues;
 }
 
-/** Gracefully shutdown all workers and queues */
+function logCloseFailures(
+  kind: 'worker' | 'queue',
+  names: string[],
+  results: PromiseSettledResult<void>[]
+): void {
+  results.forEach((r, i) => {
+    if (r.status === 'rejected') {
+      log.warn(`Failed to close ${kind}`, {
+        name: names[i],
+        error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+      });
+    }
+  });
+}
+
+/**
+ * Gracefully shutdown all workers and queues. Every close is attempted even
+ * when one rejects: with `Promise.all` a single failing `worker.close()` would
+ * skip the remaining workers and `disconnectAll()`, leaving in-flight jobs to
+ * be killed by the force-exit timer instead of being drained.
+ */
 export async function shutdownAllWorkers(): Promise<void> {
-  await Promise.all(workers.map((w) => w.close()));
-  await Promise.all(queues.map((q) => q.close()));
+  logCloseFailures(
+    'worker',
+    workers.map((w) => w.name),
+    await Promise.allSettled(workers.map((w) => w.close()))
+  );
+  logCloseFailures(
+    'queue',
+    queues.map((q) => q.name),
+    await Promise.allSettled(queues.map((q) => q.close()))
+  );
   await disconnectAll();
 }

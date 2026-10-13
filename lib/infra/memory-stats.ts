@@ -8,9 +8,12 @@
  * so a leak shows up as a counter that only ever grows — instead of as an OOM
  * kill with no trace of which structure did it.
  *
- * Reading the heartbeat line: RSS climbing while heapUsed stays flat points at
- * native memory (sharp/libvips, zlib, the runtime); heapUsed climbing with RSS
- * means a JS leak — the counters show which structure.
+ * Reading the heartbeat line: RSS climbing while the JS heap stays flat points
+ * at native memory (sharp/libvips, zlib, the runtime); the heap climbing with
+ * RSS means a JS leak — the counters show which structure. Under Bun read
+ * `jscHeapMb`, not `heapUsedMb`: Bun's `process.memoryUsage().heapUsed` sits
+ * near 0 regardless of what JavaScriptCore actually holds, so the Node field
+ * would always say "native".
  */
 import { createLogger } from './logger';
 
@@ -55,8 +58,41 @@ export interface MemorySnapshot {
   heapTotalMb: number;
   externalMb: number;
   arrayBuffersMb: number;
+  /** JavaScriptCore heap in use — Bun only (absent under Node). */
+  jscHeapMb?: number;
+  /** JavaScriptCore heap capacity — Bun only (absent under Node). */
+  jscHeapCapacityMb?: number;
   counters: Record<string, number>;
 }
+
+// ── JSC heap introspection (Bun only) ───────────────────────────────────────
+interface JscHeapStats {
+  heapSize: number;
+  heapCapacity: number;
+}
+
+// undefined = not attempted yet, null = unavailable (Node), fn = loaded
+let jscHeapStats: (() => JscHeapStats) | null | undefined;
+
+async function loadJscHeapStats(): Promise<void> {
+  if (jscHeapStats !== undefined) return;
+  try {
+    // Non-literal specifier + webpackIgnore so neither webpack nor Turbopack
+    // tries to resolve 'bun:jsc' at build time — it only exists under Bun.
+    const specifier = 'bun:jsc';
+    const jsc = (await import(/* webpackIgnore: true */ specifier)) as {
+      heapStats?: () => JscHeapStats;
+    };
+    jscHeapStats = typeof jsc.heapStats === 'function' ? jsc.heapStats : null;
+  } catch {
+    jscHeapStats = null; // not running under Bun — memoryUsage() only
+  }
+}
+
+// Kick off at import so the first heartbeat and /api/health already carry the
+// JSC fields; the module graphs that read snapshots (Next bundle, server.ts)
+// each load it once.
+void loadJscHeapStats();
 
 /** Current process memory + every registered counter. Safe to call anywhere. */
 export function getMemorySnapshot(): MemorySnapshot {
@@ -69,12 +105,25 @@ export function getMemorySnapshot(): MemorySnapshot {
       // A broken provider must never kill the heartbeat
     }
   }
+  let jsc: Pick<MemorySnapshot, 'jscHeapMb' | 'jscHeapCapacityMb'> = {};
+  if (jscHeapStats) {
+    try {
+      const hs = jscHeapStats();
+      jsc = {
+        jscHeapMb: toMb(hs.heapSize),
+        jscHeapCapacityMb: toMb(hs.heapCapacity),
+      };
+    } catch {
+      // JSC introspection failure must never kill the heartbeat
+    }
+  }
   return {
     rssMb: toMb(mem.rss),
     heapUsedMb: toMb(mem.heapUsed),
     heapTotalMb: toMb(mem.heapTotal),
     externalMb: toMb(mem.external),
     arrayBuffersMb: toMb(mem.arrayBuffers ?? 0),
+    ...jsc,
     counters,
   };
 }
