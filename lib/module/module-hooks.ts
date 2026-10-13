@@ -88,6 +88,13 @@ export interface HookMap {
     referenceId: string,
     amountCents: number,
   ];
+  /**
+   * A converted payment was refunded (consumed by core-affiliates to claw the
+   * commission back). `referenceId` must match the one passed to
+   * `payment.conversion` for the same purchase; `amountCents` is the refunded
+   * amount, so a partial refund claws back proportionally.
+   */
+  'payment.refund': [userId: string, referenceId: string, amountCents: number];
   /** Unhandled WS message types delegated to modules (e.g. core-chat voice calls). */
   'ws.message': [
     userId: string,
